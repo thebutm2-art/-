@@ -1,0 +1,7 @@
+playwright==1.44.0
+openpyxl==3.1.2
+pandas==2.2.2
+msoffcrypto-tool==5.4.2
+PyPDF2==3.0.1
+python-dotenv==1.0.1
+rich==13.7.1
