@@ -72,9 +72,16 @@ class App:
         self.gagae = ttk.Entry(opt, width=8)
         self.gagae.grid(row=0, column=3, sticky="w", padx=6)
 
+        # 메일 암호 (매 실행 입력, 저장 안 함) — 배민 정산서 자동 수신용
+        ttk.Label(opt, text="메일 암호(Gmail 앱 비밀번호):").grid(row=1, column=0, sticky="w", pady=6)
+        self.mailpw = ttk.Entry(opt, width=24, show="●")
+        self.mailpw.grid(row=1, column=1, columnspan=2, sticky="w", padx=6)
+        ttk.Label(opt, text="(thebut_m2@79daepo.com)", foreground="#888")\
+            .grid(row=1, column=3, sticky="w")
+
         self.fetch = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt, text="토더 자동수집(Playwright)", variable=self.fetch)\
-            .grid(row=1, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(opt, text="자동수집(배민 메일 + 토더)", variable=self.fetch)\
+            .grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
 
         self.run_btn = ttk.Button(root, text="손익 보고서 생성", command=self._run)
         self.run_btn.pack(**pad)
@@ -99,16 +106,31 @@ class App:
         gagae = self.gagae.get().strip()
         gagae_val = int(gagae) if gagae.isdigit() else None
         fetch = self.fetch.get()
+        mail_pw = self.mailpw.get().strip()
+        if fetch and not mail_pw:
+            if not messagebox.askyesno("메일 암호 없음",
+                    "메일 암호가 비어 있어 배민 정산서를 자동 수신하지 못합니다.\n"
+                    "downloads 폴더에 정산서가 이미 있다면 계속 진행할 수 있습니다.\n계속할까요?"):
+                return
 
         self.run_btn.config(state="disabled")
         self.log.delete("1.0", "end")
         threading.Thread(target=self._worker,
-                         args=(sel, year, month, gagae_val, fetch), daemon=True).start()
+                         args=(sel, year, month, gagae_val, fetch, mail_pw), daemon=True).start()
 
-    def _worker(self, names, year, month, gagae_val, fetch):
+    def _worker(self, names, year, month, gagae_val, fetch, mail_pw):
         old = sys.stdout
         sys.stdout = TextRedirector(self.log)
         done, fail = [], []
+        # 배민 정산서 Gmail 자동 수신 (선택 매장 대상, 1회)
+        if fetch and mail_pw:
+            try:
+                from step_baemin_mail import fetch_all as fetch_mail
+                sel_stores = [self.by_name[n] for n in names]
+                print("배민 정산서 메일 수신 중...")
+                fetch_mail(sel_stores, year, month, mail_pass=mail_pw)
+            except Exception as e:
+                print(f"[경고] 메일 수신 실패(계속 진행): {e}")
         try:
             sik_bu = run_report._load_sikbu(month)
         except Exception as e:

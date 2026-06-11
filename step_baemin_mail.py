@@ -38,9 +38,16 @@ def _attach_xlsx(msg):
 
 
 def fetch_all(stores: list[dict], year: int, month: int,
-              save_dir: Path | None = None) -> dict[str, Path]:
-    """대상월 배민 정산서를 매장별로 수신·저장. Returns {점포명: 저장경로}."""
+              save_dir: Path | None = None,
+              mail_user: str | None = None,
+              mail_pass: str | None = None) -> dict[str, Path]:
+    """대상월 배민 정산서를 매장별로 수신·저장. Returns {점포명: 저장경로}.
+
+    mail_pass: 실행 시 입력받은 Gmail 앱 비밀번호 (없으면 .env의 MAIL_PASS).
+    """
     save_dir = save_dir or config.DOWNLOAD_DIR
+    user = mail_user or config.MAIL_USER
+    pw   = mail_pass or config.MAIL_PASS
     ym = f"{year}-{month:02d}"
     month_tag = f"{year}년 {month}월"      # 첨부 파일명 매칭 키
     sender = config.BAEMIN_SENDER_KEYWORD   # woowahan.com
@@ -53,7 +60,7 @@ def fetch_all(stores: list[dict], year: int, month: int,
 
     saved: dict[str, Path] = {}
     imap = imaplib.IMAP4_SSL(config.MAIL_HOST, config.MAIL_PORT)
-    imap.login(config.MAIL_USER, config.MAIL_PASS)
+    imap.login(user, pw)
     try:
         imap.select("INBOX")
         # 발신자 + 정산명세서 제목으로 1차 검색
