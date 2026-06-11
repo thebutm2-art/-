@@ -97,7 +97,8 @@ def process_store(store: dict, year: int, month: int, sik_bu: list[dict],
         console.print(f"[yellow]  배민 정산 파일 없음 — {store['name']} 스킵[/yellow]")
         return None
     bm = parse_settlement_file(bm_file, {"name": store["name"], "code": store["name"],
-                                         "file_pw": store["file_pw"], "biz_no": ""})
+                                         "file_pw": store["file_pw"], "biz_no": ""},
+                               gagae_count=store.get("gagae_count"))
     if not bm:
         return None
 
@@ -160,12 +161,17 @@ def main():
     ap.add_argument("--store", default=None, help="특정 매장명만")
     ap.add_argument("--fetch", action="store_true", help="Gmail+토더 자동수집")
     ap.add_argument("--master", default=None)
+    ap.add_argument("--gagae", type=int, default=None,
+                    help="가게배달 건수(배민셀프서비스 주문내역 기준). 단일매장 실행 시 적용")
     args = ap.parse_args()
 
     year, month = map(int, args.month.split("-"))
     stores = load_stores(Path(args.master) if args.master else None)
     if args.store:
         stores = [s for s in stores if s["name"] == args.store]
+    if args.gagae is not None:
+        for s in stores:
+            s["gagae_count"] = args.gagae
     sik_bu = _load_sikbu(month)
 
     done, fail = [], []
