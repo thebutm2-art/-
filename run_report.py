@@ -57,6 +57,27 @@ def _find_baemin_file(store: dict, ym: str) -> Path | None:
     return next((c for c in cands if c.exists()), None)
 
 
+def _find_coupang_file(store: dict, ym: str) -> Path | None:
+    """쿠팡이츠 정산내역서 탐색 (downloads/ 또는 다운로드 폴더)."""
+    import os
+    pats = [f"coupang_{store['toorder_name']}_{ym}.xlsx",
+            f"쿠팡이츠_{store['name']}_{ym}.xlsx"]
+    for p in pats:
+        f = config.DOWNLOAD_DIR / p
+        if f.exists():
+            return f
+    # 사용자 다운로드 폴더에서 쿠팡/매출내역 키워드 탐색
+    dl = Path(os.path.expanduser("~")) / "Downloads"
+    if dl.exists():
+        hits = sorted(
+            [f for f in dl.glob("*.xlsx")
+             if any(k in f.name for k in ("쿠팡", "쿠팡이츠", "매출내역", "coupang"))],
+            key=lambda f: f.stat().st_mtime, reverse=True)
+        if hits:
+            return hits[0]
+    return None
+
+
 async def _fetch_toorder(store: dict, year: int, month: int, channel: str, dest: Path):
     import os
     from step_toorder import export_store_channel
@@ -106,13 +127,26 @@ def process_store(store: dict, year: int, month: int, sik_bu: list[dict],
     if out.exists(): out.unlink()
     fill_report(store["name"], month, "baemin", pl_bm, out_path=out)
 
-    # 쿠팡 섹션 (식자재/부자재만)
+    # 쿠팡 섹션: 식자재/부자재=토더, 매출·수수료=쿠팡이츠 정산내역서(있으면 정식 섹션)
     if t_cp.exists():
         cp = _load_toorder(t_cp); cp_cost = match_costs(cp, sik_bu)
-        cp_sales = sum(x["sales"] for x in cp if isinstance(x["sales"], (int, float)))
-        fill_report(store["name"], month, "coupang",
-                    {"sales": round(cp_sales), "sik": round(cp_cost["total_sik"]),
-                     "bu": round(cp_cost["total_bu"])}, out_path=out, cost_only=True)
+        cp_pl = {"sik": round(cp_cost["total_sik"]), "bu": round(cp_cost["total_bu"])}
+        cp_settle = _find_coupang_file(store, ym)
+        if cp_settle:
+            from step_coupang_parse import parse_coupang_settlement
+            cs = parse_coupang_settlement(cp_settle)
+            cp_pl.update({
+                "sales": round(cs["sales"]), "ad_brokerage": round(cs["ad_brokerage"]),
+                "ad_custom": round(cs["ad_custom"]), "card_fee": round(cs["card_fee"]),
+                "vat": round(cs["vat"]), "delivery": round(cs["delivery"]),
+            })
+            fill_report(store["name"], month, "coupang", cp_pl, out_path=out)
+        else:
+            # 정산내역서 없으면 토더 매출 + 식자재/부자재만
+            cp_sales = sum(x["sales"] for x in cp if isinstance(x["sales"], (int, float)))
+            cp_pl["sales"] = round(cp_sales)
+            console.print(f"[yellow]  쿠팡이츠 정산내역서 없음 — 매출·식자재·부자재만 기재[/yellow]")
+            fill_report(store["name"], month, "coupang", cp_pl, out_path=out, cost_only=True)
     else:
         console.print(f"[yellow]  쿠팡 토더 파일 없음 — 쿠팡 섹션 생략[/yellow]")
 
