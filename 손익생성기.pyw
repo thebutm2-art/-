@@ -54,37 +54,51 @@ class App:
         pad = {"padx": 8, "pady": 4}
 
         top = ttk.Frame(root); top.pack(fill="x", **pad)
-        ttk.Label(top, text="매장 선택 (복수 선택 가능)").pack(anchor="w")
-        self.lb = tk.Listbox(top, selectmode="extended", height=10, exportselection=False)
+        ttk.Label(top, text="① 매장 선택 (한 개만 선택하면 아래 매장정보 편집 가능)").pack(anchor="w")
+        self.lb = tk.Listbox(top, selectmode="extended", height=8, exportselection=False)
         for s in self.stores:
             self.lb.insert("end", s["name"])
         self.lb.pack(fill="x")
+        self.lb.bind("<<ListboxSelect>>", self._on_select)
         ttk.Button(top, text="전체 선택", command=self._select_all).pack(anchor="e", pady=2)
+
+        # ── 선택 매장 정보(배민파트너명·파일암호) — 마스터에 저장됨 ──
+        info = ttk.LabelFrame(root, text="② 선택 매장 정보 (정산서용 — 입력하면 마스터에 저장)")
+        info.pack(fill="x", padx=8, pady=4)
+        ttk.Label(info, text="배민 파트너명:").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        self.partner = ttk.Entry(info, width=16)
+        self.partner.grid(row=0, column=1, sticky="w")
+        ttk.Label(info, text="(정산명세서의 파트너 이름, 예: 장승환)", foreground="#888")\
+            .grid(row=0, column=2, sticky="w", padx=6)
+        ttk.Label(info, text="파일암호:").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        self.filepw = ttk.Entry(info, width=16)
+        self.filepw.grid(row=1, column=1, sticky="w")
+        ttk.Label(info, text="(정산서 엑셀 잠금해제용 — 생년월일6자리 / 법인번호 뒷7자리)",
+                  foreground="#888").grid(row=1, column=2, sticky="w", padx=6)
 
         opt = ttk.Frame(root); opt.pack(fill="x", **pad)
         ym = date.today()
         y, m = (ym.year, ym.month - 1) if ym.month > 1 else (ym.year - 1, 12)
-        ttk.Label(opt, text="대상 월 (YYYY-MM):").grid(row=0, column=0, sticky="w")
+        ttk.Label(opt, text="③ 대상 월 (YYYY-MM):").grid(row=0, column=0, sticky="w")
         self.month = ttk.Entry(opt, width=12); self.month.insert(0, f"{y}-{m:02d}")
         self.month.grid(row=0, column=1, sticky="w", padx=6)
-
         ttk.Label(opt, text="가게배달 건수(선택):").grid(row=0, column=2, sticky="w")
         self.gagae = ttk.Entry(opt, width=8)
         self.gagae.grid(row=0, column=3, sticky="w", padx=6)
 
-        # 메일 암호 (매 실행 입력, 저장 안 함) — 배민 정산서 자동 수신용
-        ttk.Label(opt, text="메일 암호(Gmail 앱 비밀번호):").grid(row=1, column=0, sticky="w", pady=6)
+        # Gmail 앱 비밀번호 (메일 수신용) — 파일암호와 다름!
+        ttk.Label(opt, text="④ Gmail 앱 비밀번호:").grid(row=1, column=0, sticky="w", pady=6)
         self.mailpw = ttk.Entry(opt, width=24, show="●")
         self.mailpw.grid(row=1, column=1, columnspan=2, sticky="w", padx=6)
-        ttk.Label(opt, text="(thebut_m2@79daepo.com)", foreground="#888")\
+        ttk.Label(opt, text="(정산서 메일 수신용 16자리 · 파일암호와 다름)", foreground="#c00")\
             .grid(row=1, column=3, sticky="w")
 
         self.dosend = tk.BooleanVar(value=True)
         ttk.Checkbutton(opt, text="배민셀프 정산명세서 자동발송(메일)", variable=self.dosend)\
-            .grid(row=2, column=0, columnspan=3, sticky="w", pady=2)
+            .grid(row=2, column=0, columnspan=4, sticky="w", pady=2)
         self.fetch = tk.BooleanVar(value=True)
         ttk.Checkbutton(opt, text="자동수집(배민 메일 수신 + 토더/쿠팡)", variable=self.fetch)\
-            .grid(row=3, column=0, columnspan=3, sticky="w", pady=2)
+            .grid(row=3, column=0, columnspan=4, sticky="w", pady=2)
 
         self.run_btn = ttk.Button(root, text="손익 보고서 생성", command=self._run)
         self.run_btn.pack(**pad)
@@ -95,6 +109,34 @@ class App:
 
     def _select_all(self):
         self.lb.select_set(0, "end")
+        self._on_select()
+
+    def _on_select(self, event=None):
+        """한 개만 선택 시 그 매장의 파트너명/파일암호를 불러와 편집 가능."""
+        sel = self.lb.curselection()
+        self.partner.delete(0, "end"); self.filepw.delete(0, "end")
+        if len(sel) == 1:
+            s = self.by_name[self.lb.get(sel[0])]
+            self.partner.insert(0, s.get("partner", "") or "")
+            self.filepw.insert(0, s.get("file_pw", "") or "")
+            self.partner.config(state="normal"); self.filepw.config(state="normal")
+        else:
+            self.partner.config(state="disabled"); self.filepw.config(state="disabled")
+
+    def _save_store_info(self, name, partner, filepw):
+        """배민파트너명/파일암호를 마스터(점포마스터_v2.xlsx)에 저장 + 메모리 갱신."""
+        import openpyxl
+        from store_master import MASTER_V2
+        wb = openpyxl.load_workbook(MASTER_V2); ws = wb.active
+        hdr = {c.value: i + 1 for i, c in enumerate(ws[1])}
+        for r in range(2, ws.max_row + 1):
+            if ws.cell(r, hdr["점포명"]).value == name:
+                if "배민파트너명" in hdr: ws.cell(r, hdr["배민파트너명"]).value = partner
+                if "파일암호" in hdr:     ws.cell(r, hdr["파일암호"]).value = filepw
+                break
+        wb.save(MASTER_V2)
+        self.by_name[name]["partner"] = partner
+        self.by_name[name]["file_pw"] = filepw
 
     def _run(self):
         sel = [self.lb.get(i) for i in self.lb.curselection()]
@@ -115,6 +157,15 @@ class App:
                     "메일 암호가 비어 있어 배민 정산서를 자동 수신하지 못합니다.\n"
                     "downloads 폴더에 정산서가 이미 있다면 계속 진행할 수 있습니다.\n계속할까요?"):
                 return
+
+        # 단일 매장 선택 시, 입력한 파트너명/파일암호를 마스터에 저장
+        if len(sel) == 1:
+            p = self.partner.get().strip(); f = self.filepw.get().strip().replace("-", "")
+            if p or f:
+                try:
+                    self._save_store_info(sel[0], p, f)
+                except Exception as e:
+                    messagebox.showwarning("저장 경고", f"매장정보 저장 실패: {e}")
 
         do_send = self.dosend.get()
         self.run_btn.config(state="disabled")
