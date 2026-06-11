@@ -86,11 +86,10 @@ class App:
         self.gagae = ttk.Entry(opt, width=8)
         self.gagae.grid(row=0, column=3, sticky="w", padx=6)
 
-        # Gmail 앱 비밀번호 (메일 수신용) — 파일암호와 다름!
-        ttk.Label(opt, text="④ Gmail 앱 비밀번호:").grid(row=1, column=0, sticky="w", pady=6)
-        self.mailpw = ttk.Entry(opt, width=24, show="●")
-        self.mailpw.grid(row=1, column=1, columnspan=2, sticky="w", padx=6)
-        ttk.Label(opt, text="(정산서 메일 수신용 16자리 · 파일암호와 다름)", foreground="#c00")\
+        # Gmail은 브라우저 방식 수신 (앱 비밀번호 불필요) — 처음 1회만 창에서 로그인
+        ttk.Label(opt, text="④ Gmail 수신: 브라우저 자동(앱 비밀번호 불필요)",
+                  foreground="#0a0").grid(row=1, column=0, columnspan=3, sticky="w", pady=6)
+        ttk.Label(opt, text="처음 1회만 열리는 창에서 Gmail 로그인", foreground="#888")\
             .grid(row=1, column=3, sticky="w")
 
         self.dosend = tk.BooleanVar(value=True)
@@ -151,12 +150,6 @@ class App:
         gagae = self.gagae.get().strip()
         gagae_val = int(gagae) if gagae.isdigit() else None
         fetch = self.fetch.get()
-        mail_pw = self.mailpw.get().strip()
-        if fetch and not mail_pw:
-            if not messagebox.askyesno("메일 암호 없음",
-                    "메일 암호가 비어 있어 배민 정산서를 자동 수신하지 못합니다.\n"
-                    "downloads 폴더에 정산서가 이미 있다면 계속 진행할 수 있습니다.\n계속할까요?"):
-                return
 
         # 단일 매장 선택 시, 입력한 파트너명/파일암호를 마스터에 저장
         if len(sel) == 1:
@@ -171,10 +164,10 @@ class App:
         self.run_btn.config(state="disabled")
         self.log.delete("1.0", "end")
         threading.Thread(target=self._worker,
-                         args=(sel, year, month, gagae_val, fetch, mail_pw, do_send),
+                         args=(sel, year, month, gagae_val, fetch, do_send),
                          daemon=True).start()
 
-    def _worker(self, names, year, month, gagae_val, fetch, mail_pw, do_send):
+    def _worker(self, names, year, month, gagae_val, fetch, do_send):
         import time, asyncio
         import config
         old = sys.stdout
@@ -192,22 +185,14 @@ class App:
                 except Exception as e:
                     print(f"  발송 실패: {repr(e)[:100]}")
 
-        # ② 배민 정산서 Gmail 수신 (폴링: 메일 도착까지 최대 ~8분)
-        if mail_pw:
-            from step_baemin_mail import fetch_all as fetch_mail
-            print("배민 정산서 메일 수신 대기 중... (최대 8분)")
-            need = {s["name"] for s in sel_stores if s.get("partner")}
-            got = set()
-            for attempt in range(16):
-                try:
-                    saved = fetch_mail(sel_stores, year, month, mail_pass=mail_pw)
-                    got |= set(saved.keys())
-                except Exception as e:
-                    print(f"  수신 시도 실패: {repr(e)[:80]}")
-                if need and need <= got:
-                    break
-                if attempt < 15:
-                    time.sleep(30)
+        # ② 배민 정산서 Gmail 수신 (브라우저 방식 — 앱 비밀번호 불필요, 폴링 최대 8분)
+        if fetch:
+            try:
+                from step_gmail_browser import fetch_many
+                print("배민 정산서 Gmail 수신 대기 중... (브라우저, 최대 8분)")
+                asyncio.run(fetch_many(sel_stores, year, month))
+            except Exception as e:
+                print(f"[경고] Gmail 수신 실패(계속 진행): {repr(e)[:100]}")
         try:
             sik_bu = run_report._load_sikbu(month)
         except Exception as e:
