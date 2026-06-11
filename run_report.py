@@ -172,6 +172,15 @@ def main():
     if args.gagae is not None:
         for s in stores:
             s["gagae_count"] = args.gagae
+
+    # --fetch: 배민 정산서를 Gmail에서 매장별로 일괄 수신 (1회 IMAP 세션)
+    if args.fetch:
+        try:
+            from step_baemin_mail import fetch_all as fetch_baemin_mail
+            fetch_baemin_mail(stores, year, month)
+        except Exception as e:
+            console.print(f"[yellow]배민 정산서 메일 수신 건너뜀: {e}[/yellow]")
+
     sik_bu = _load_sikbu(month)
 
     done, fail = [], []
