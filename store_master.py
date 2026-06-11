@@ -22,36 +22,41 @@ import config
 console = Console(highlight=False)
 
 MASTER_V2 = config.BASE_DIR / "점포마스터_v2.xlsx"
-REQUIRED = ["점포명", "토더매장명", "배민파트너명", "파일암호"]
+REQUIRED = ["점포명"]   # 점포명만 필수, 나머지는 있으면 사용
+
+
+def _g(row, key):
+    return str(row.get(key, "") or "").strip()
 
 
 def load_stores(path: Path | None = None) -> list[dict]:
     path = path or MASTER_V2
     if not path.exists():
-        raise FileNotFoundError(f"마스터 없음: {path} (create_template 실행)")
+        raise FileNotFoundError(f"마스터 없음: {path} (import_accounts 실행)")
     df = pd.read_excel(path, dtype=str).fillna("")
     df.columns = [c.strip() for c in df.columns]
-    miss = [c for c in REQUIRED if c not in df.columns]
-    if miss:
-        raise ValueError(f"마스터 필수컬럼 없음: {miss}")
+    if "점포명" not in df.columns:
+        raise ValueError("마스터에 '점포명' 컬럼이 없습니다")
 
     stores, skipped = [], 0
     for i, row in df.iterrows():
-        name    = str(row["점포명"]).strip()
-        toorder = str(row["토더매장명"]).strip() or name
-        partner = str(row["배민파트너명"]).strip()
-        file_pw = str(row["파일암호"]).strip().replace("-", "")
-        if not name or not file_pw or not partner:
-            console.print(f"[yellow][경고] {i+2}행 스킵 ({name or '미입력'}): 필수값 누락[/yellow]")
+        name = _g(row, "점포명")
+        if not name:
             skipped += 1
             continue
+        gagae = _g(row, "가게배달건수")
         stores.append({
-            "name": name, "toorder_name": toorder,
-            "partner": partner, "file_pw": file_pw,
-            "uid": str(row.get("셀프서비스ID", "")).strip(),
-            "pw":  str(row.get("셀프서비스PW", "")).strip(),
+            "name": name,
+            "toorder_name": _g(row, "토더매장명") or name,
+            "partner": _g(row, "배민파트너명"),
+            "file_pw": _g(row, "파일암호").replace("-", ""),
+            "baemin_id": _g(row, "배민아이디"),
+            "baemin_pw": _g(row, "배민비밀번호"),
+            "coupang_id": _g(row, "쿠팡아이디"),
+            "coupang_pw": _g(row, "쿠팡비밀번호"),
+            "gagae_count": int(gagae) if gagae.isdigit() else None,
         })
-    console.print(f"[green][OK] 마스터 v2 로딩: {len(stores)}개 점포 (스킵 {skipped})[/green]")
+    console.print(f"[green][OK] 마스터 로딩: {len(stores)}개 점포 (스킵 {skipped})[/green]")
     return stores
 
 
