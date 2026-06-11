@@ -85,12 +85,19 @@ async def fetch_many(stores: list[dict], year: int, month: int,
         return saved
 
     async with stealth_persistent(headless=False) as (ctx, page):
-        # 로그인 확인
+        # 로그인 확인 — 안 돼 있으면 열린 창에서 로그인할 때까지 대기(최대 5분)
         await page.goto("https://mail.google.com/mail/u/0/", wait_until="domcontentloaded", timeout=40000)
         await page.wait_for_timeout(3000)
         if not await _is_logged_in(page):
-            console.print("[red]  Gmail 로그인이 필요합니다. 열린 창에서 1회 로그인 후 다시 실행하세요.[/red]")
-            return saved
+            console.print("[yellow]  Gmail 로그인이 필요합니다. 열린 창에서 로그인해 주세요 (대기 중, 최대 5분)...[/yellow]")
+            for _ in range(60):  # 5초 × 60 = 5분
+                await page.wait_for_timeout(5000)
+                if await _is_logged_in(page):
+                    console.print("[green]  Gmail 로그인 확인됨 — 계속 진행[/green]")
+                    break
+            if not await _is_logged_in(page):
+                console.print("[red]  Gmail 로그인 시간 초과 — 다음에 다시 시도하세요.[/red]")
+                return saved
 
         waited = 0
         while len(saved) < len(targets):

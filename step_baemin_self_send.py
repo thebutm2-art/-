@@ -36,21 +36,40 @@ async def _dismiss_popups(page):
 
 
 async def _login(page, uid, pw):
+    # 이미 로그인된 세션이면 스킵
+    await page.goto("https://self.baemin.com/", wait_until="domcontentloaded", timeout=40000)
+    await page.wait_for_timeout(2500)
+    if "self.baemin.com" in page.url and "login" not in page.url:
+        return
+
     await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=40000)
-    await page.wait_for_timeout(3500)
-    ins = page.locator("input")
-    if await ins.count() < 2:
-        raise RuntimeError("배민셀프 로그인 폼을 찾지 못함(봇차단/속도제한 가능)")
-    await type_human(page, ins.nth(0), uid)
-    await type_human(page, ins.nth(1), pw)
-    await page.get_by_role("button", name="로그인").click()
-    for _ in range(30):
-        await page.wait_for_timeout(1000)
-        if "self.baemin.com" in page.url:
-            break
-    if "self.baemin.com" not in page.url:
-        raise RuntimeError("배민셀프 로그인 후 진입 실패")
-    await page.wait_for_timeout(2000)
+    await page.wait_for_timeout(4500)  # 폼 렌더 대기(봇차단 우회 후)
+
+    # 이름 기반 셀렉터 우선, 없으면 인덱스
+    id_box = page.locator("input[name='id'], input[type='text']").first
+    pw_box = page.locator("input[name='password'], input[type='password']").first
+    if not await id_box.count() or not await pw_box.count():
+        ins = page.locator("input")
+        if await ins.count() < 2:
+            raise RuntimeError("배민셀프 로그인 폼을 찾지 못함(봇차단/속도제한 가능)")
+        id_box, pw_box = ins.nth(0), ins.nth(1)
+
+    await type_human(page, id_box, uid)
+    await type_human(page, pw_box, pw)
+
+    # 로그인 클릭 (최대 2회 시도)
+    for click_try in range(2):
+        try:
+            await page.get_by_role("button", name="로그인").first.click(timeout=5000)
+        except Exception:
+            await pw_box.press("Enter")
+        for _ in range(25):
+            await page.wait_for_timeout(1000)
+            if "self.baemin.com" in page.url:
+                await page.wait_for_timeout(2000)
+                return
+        # 아직이면 한 번 더 시도
+    raise RuntimeError("배민셀프 로그인 후 진입 실패(2단계 인증/캡차 가능 — 창에서 직접 로그인 필요)")
 
 
 async def send_settlement_mail(store: dict, year: int, month: int,

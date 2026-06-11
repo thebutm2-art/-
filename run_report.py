@@ -50,11 +50,9 @@ def _load_toorder(p: Path) -> list[dict]:
 
 
 def _find_baemin_file(store: dict, ym: str) -> Path | None:
-    cands = [
-        config.DOWNLOAD_DIR / f"baemin_{store['toorder_name']}_{ym}.xlsx",
-        config.DOWNLOAD_DIR / "001_정산명세서.xlsx",  # 데모 호환
-    ]
-    return next((c for c in cands if c.exists()), None)
+    # 매장명 일치 파일만 (데모용 001 폴백 제거 — 타 매장 파일 오인 방지)
+    f = config.DOWNLOAD_DIR / f"baemin_{store['toorder_name']}_{ym}.xlsx"
+    return f if f.exists() else None
 
 
 def _find_coupang_file(store: dict, ym: str) -> Path | None:
