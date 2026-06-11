@@ -52,6 +52,7 @@ def fill_report(store_name: str, month: int, channel: str,
     template = template or TEMPLATE
     if out_path is None:
         out_path = config.OUTPUT_DIR / f"{store_name}_손익보고서.xlsx"
+    out_path.parent.mkdir(parents=True, exist_ok=True)  # 바탕화면/{매장} 폴더 자동 생성
 
     # 기존 산출물이 있으면 누적, 없으면 템플릿 복제 후 시작
     src = out_path if out_path.exists() else template

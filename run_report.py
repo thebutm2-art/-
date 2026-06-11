@@ -60,21 +60,13 @@ def _find_baemin_file(store: dict, ym: str) -> Path | None:
 def _find_coupang_file(store: dict, ym: str) -> Path | None:
     """쿠팡이츠 정산내역서 탐색 (downloads/ 또는 다운로드 폴더)."""
     import os
+    # 매장명 일치 파일만 (타 매장 파일 오인 방지)
     pats = [f"coupang_{store['toorder_name']}_{ym}.xlsx",
             f"쿠팡이츠_{store['name']}_{ym}.xlsx"]
     for p in pats:
         f = config.DOWNLOAD_DIR / p
         if f.exists():
             return f
-    # 사용자 다운로드 폴더에서 쿠팡/매출내역 키워드 탐색
-    dl = Path(os.path.expanduser("~")) / "Downloads"
-    if dl.exists():
-        hits = sorted(
-            [f for f in dl.glob("*.xlsx")
-             if any(k in f.name for k in ("쿠팡", "쿠팡이츠", "매출내역", "coupang"))],
-            key=lambda f: f.stat().st_mtime, reverse=True)
-        if hits:
-            return hits[0]
     return None
 
 
