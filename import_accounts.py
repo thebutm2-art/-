@@ -21,6 +21,11 @@ COLS = ["점포명","토더매장명","배민파트너명","파일암호",
         "배민아이디","배민비밀번호","쿠팡아이디","쿠팡비밀번호","가게배달건수"]
 
 
+def _clean(v):
+    s = str(v or "").strip()
+    return "" if s in ("계정 없음", "없음", "None", "nan") else s
+
+
 def import_accounts(src: Path, out: Path | None = None) -> Path:
     out = out or (BASE / "점포마스터_v2.xlsx")
     wb = openpyxl.load_workbook(src, data_only=True)
@@ -35,13 +40,29 @@ def import_accounts(src: Path, out: Path | None = None) -> Path:
     if not hdr:
         raise ValueError("계정정보 헤더(매장명/아이디)를 찾지 못함")
 
-    # 매장명/아이디/비번 열 위치
-    def col_of(key):
-        for c in range(1, ws.max_column + 1):
-            if key in str(ws.cell(hdr, c).value or ""):
-                return c
-        return None
-    c_name, c_id, c_pw = col_of("매장명"), col_of("아이디"), col_of("비밀번호")
+    # 그룹 헤더(배달의민족/쿠팡이츠) 행 = 헤더 바로 위
+    grp = hdr - 1
+    c_name = next((c for c in range(1, ws.max_column + 1)
+                   if "매장명" in str(ws.cell(hdr, c).value or "")), None)
+
+    # 그룹별 아이디/비번 열: 그룹 라벨 위치부터 오른쪽으로 아이디/비번 매칭
+    def grp_cols(label):
+        start = next((c for c in range(1, ws.max_column + 1)
+                      if label in str(ws.cell(grp, c).value or "")), None)
+        if not start:
+            return None, None
+        cid = cpw = None
+        for c in range(start, ws.max_column + 1):
+            h = str(ws.cell(hdr, c).value or "")
+            if "아이디" in h and cid is None: cid = c
+            elif "비밀번호" in h and cpw is None: cpw = c
+            # 다음 그룹 시작 전까지만
+            if c > start and str(ws.cell(grp, c).value or "").strip() and label not in str(ws.cell(grp, c).value):
+                break
+        return cid, cpw
+
+    bm_id, bm_pw = grp_cols("배달의민족")
+    cp_id, cp_pw = grp_cols("쿠팡")
 
     rows = []
     for r in range(hdr + 1, ws.max_row + 1):
@@ -53,10 +74,10 @@ def import_accounts(src: Path, out: Path | None = None) -> Path:
             "토더매장명": str(name).strip(),   # 기본값=점포명, 다르면 수정
             "배민파트너명": "",
             "파일암호": "",
-            "배민아이디": str(ws.cell(r, c_id).value or "").strip() if c_id else "",
-            "배민비밀번호": str(ws.cell(r, c_pw).value or "").strip() if c_pw else "",
-            "쿠팡아이디": "",
-            "쿠팡비밀번호": "",
+            "배민아이디": _clean(ws.cell(r, bm_id).value) if bm_id else "",
+            "배민비밀번호": _clean(ws.cell(r, bm_pw).value) if bm_pw else "",
+            "쿠팡아이디": _clean(ws.cell(r, cp_id).value) if cp_id else "",
+            "쿠팡비밀번호": _clean(ws.cell(r, cp_pw).value) if cp_pw else "",
             "가게배달건수": "",
         })
 
