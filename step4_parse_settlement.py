@@ -44,26 +44,46 @@ def _decrypt(path: Path, password: str) -> io.BytesIO:
         return out
 
 
-def _classify_column(group: str, mid: str) -> str | None:
-    """그룹/중간 헤더명으로 컬럼을 손익 항목 키에 분류."""
+GAGAE_DELIVERY_UNIT = 4400  # 가게배달(자체배달) 건당 배달비
+
+
+def _classify_column(group: str, mid: str, sub: str) -> str | None:
+    """그룹/중간/세부 헤더명으로 컬럼을 손익 항목 키에 분류 (사장님 신규 기준).
+
+    매출       = 바로결제주문금액 + 가게배달팁(바로결제/만나서결제 배달팁) + 보정금액
+    중개이용료  = 배민1 + 알뜰배달 + 가게배달(A부분중개) + 픽업 중개이용료 (전체)
+    프로모션    = 고객할인비용 > 주문금액 즉시할인 (메뉴할인 제외)
+    배달비      = 배민1 한집 + 알뜰배달 배달비 (+ 가게배달 건수×4400은 별도 가산)
+    카드/어플   = 결제정산수수료 > 기본수수료(정률)  (우대수수료 제외)
+    부가세      = 부가세
+    광고비(우가클) = 우리가게클릭 이용요금 + 부가세
+    """
     g = (group or "").replace(" ", "")
     m = (mid or "").replace(" ", "")
+    s = (sub or "").replace(" ", "")
+
+    # 보정금액 (그룹/중간/세부 어디든 '보정' 포함)
+    if "보정" in g or "보정" in m or "보정" in s:
+        return "total_sales"
 
     if "주문중개" in g:
-        if "주문금액" in m:        return "total_sales"
-        if "부분환불" in m:        return "total_sales"   # 환불은 매출 차감(음수)
-        if "중개이용료" in m:      return "brokerage_fee"
-        if "할인" in m:            return "discount_burden"
+        if "주문금액" in m:
+            if "바로결제" in s:        return "total_sales"   # 만나서결제·부분환불 제외
+            return None
+        if "중개이용료" in m:          return "brokerage_fee"
+        if "할인" in m:
+            if "즉시할인" in s:        return "discount_burden"  # 메뉴할인 제외
+            return None
     if "배달" in g and "주문중개" not in g:
-        # (B) 배달 그룹 전체 = 점주 부담 배달비 (배달팁·배민클럽할인·배달비 모두 포함)
-        return "delivery_fee"
+        if "배달팁" in m:              return "total_sales"   # 가게배달팁 → 매출
+        if "배달비" in m:              return "delivery_fee"  # 배민1한집 + 알뜰배달비
+        return None                                          # 배민클럽 할인비용 등 제외
     if "그외" in g:
-        if "결제" in m and "수수료" in m:  return "payment_fee"
-        if "만나서결제" in m:              return "manna_offset"  # 현금수령 상계 (손익 제외)
-    if "기타" in g:                return "etc_income"
+        if "결제" in m and "수수료" in m:
+            if "기본수수료" in s:      return "payment_fee"   # 우대수수료 제외
+            return None
     if "부가세" in g:              return "vat"
     if "우리가게클릭" in g:        return "ad_cost"
-    if "배민오더" in g:            return "baemin_order"
     if "입금금액" in g:            return "expected_settlement"
     return None
 
@@ -86,9 +106,10 @@ def _parse_baemin_detail(wb) -> dict:
         raise ValueError("상세 시트에서 헤더(주문중개)를 찾지 못함")
 
     mid_row  = group_row + 1
+    sub_row  = group_row + 2
     data_row = group_row + 3  # 그룹/중간/세부 3행 뒤부터 데이터
 
-    # 컬럼별 그룹/중간 헤더 forward-fill
+    # 컬럼별 그룹/중간/세부 헤더 forward-fill
     col_class = {}
     cur_group = ""
     for c in range(1, ws.max_column + 1):
@@ -97,24 +118,18 @@ def _parse_baemin_detail(wb) -> dict:
         if g and "(" in str(g) and ")" in str(g):
             cur_group = str(g)
         mid = ws.cell(mid_row, c).value
-        # 중간 헤더도 그룹 내에서 forward-fill
+        sub = ws.cell(sub_row, c).value
         if mid:
-            col_class[c] = (cur_group, str(mid))
+            cur_mid = str(mid)
         else:
-            # 중간 헤더 없으면 직전 중간 헤더 유지(같은 그룹 내)
             prev = col_class.get(c - 1)
-            if prev and prev[0] == cur_group:
-                col_class[c] = (cur_group, prev[1])
-            else:
-                col_class[c] = (cur_group, "")
+            cur_mid = prev[1] if (prev and prev[0] == cur_group) else ""
+        col_class[c] = (cur_group, cur_mid, str(sub) if sub else "")
 
     result = {k: 0.0 for k in NUMERIC_KEYS}
-    result["manna_offset"] = 0.0
-    result["etc_income"]   = 0.0
-    result["baemin_order"] = 0.0
 
-    for c, (g, m) in col_class.items():
-        key = _classify_column(g, m)
+    for c, (g, m, s) in col_class.items():
+        key = _classify_column(g, m, s)
         if not key or key not in result:
             continue
         total = 0.0
@@ -129,11 +144,24 @@ def _parse_baemin_detail(wb) -> dict:
               "discount_burden", "ad_cost", "vat"):
         result[k] = abs(result[k])
 
+    # 가게배달 건수 (E열 '주문유형/기타'에서 '가게배달' 행 수) — 참고/폴백용
+    type_col = 5  # E열
+    gagae = 0
+    for r in range(data_row, ws.max_row + 1):
+        v = ws.cell(r, type_col).value
+        if v and "가게배달" in str(v):
+            gagae += 1
+    result["gagae_count_settlement"] = gagae
     return result
 
 
-def parse_settlement_file(path: Path, store: dict) -> dict | None:
-    """점포 정산 첨부파일 파싱 → 손익 항목 dict. 실패 시 None."""
+def parse_settlement_file(path: Path, store: dict,
+                          gagae_count: int | None = None) -> dict | None:
+    """점포 정산 첨부파일 파싱 → 손익 항목 dict. 실패 시 None.
+
+    gagae_count: 가게배달 건수(배민셀프서비스 주문내역 기준). None이면 정산서 카운트 폴백.
+                 배달비 += 가게배달건수 × 4400.
+    """
     password = store.get("file_pw") or store.get("biz_no", "")
     try:
         dec = _decrypt(path, password)
@@ -147,12 +175,18 @@ def parse_settlement_file(path: Path, store: dict) -> dict | None:
             console.print(f"[yellow]  [{store['name']}] 배민 표준 양식 아님 — 확인 필요[/yellow]")
             return None
 
+        # 가게배달 배달비 = 건수 × 4400 (주문내역 기준 우선, 없으면 정산서 카운트)
+        cnt = gagae_count if gagae_count is not None else data.get("gagae_count_settlement", 0)
+        data["gagae_count"] = cnt
+        data["gagae_delivery_fee"] = cnt * GAGAE_DELIVERY_UNIT
+        data["delivery_fee"] += data["gagae_delivery_fee"]
+
         data["store_code"] = store["code"]
         data["store_name"] = store["name"]
+        src = "주문내역" if gagae_count is not None else "정산서카운트"
         console.print(
-            f"[green]  [{store['name']}] 파싱 완료 — "
-            f"총매출 {data['total_sales']:,.0f}원, "
-            f"입금예정 {data.get('expected_settlement',0):,.0f}원[/green]"
+            f"[green]  [{store['name']}] 파싱 완료 — 매출 {data['total_sales']:,.0f}원 "
+            f"| 배달비 {data['delivery_fee']:,.0f}(가게배달 {cnt}건×4400={data['gagae_delivery_fee']:,.0f}, {src})[/green]"
         )
         return data
 
