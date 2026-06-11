@@ -108,6 +108,14 @@ def process_store(store: dict, year: int, month: int, sik_bu: list[dict],
     if fetch:
         asyncio.run(_fetch_toorder(store, year, month, "baemin", t_bm))
         asyncio.run(_fetch_toorder(store, year, month, "coupang", t_cp))
+        # 쿠팡 정산내역서 자동 다운로드(봇차단 우회, 계정 있으면)
+        if store.get("coupang_id"):
+            try:
+                from step_coupang_fetch import fetch_coupang
+                cp_dest = config.DOWNLOAD_DIR / f"coupang_{store['toorder_name']}_{ym}.xlsx"
+                asyncio.run(fetch_coupang(store, year, month, cp_dest))
+            except Exception as e:
+                console.print(f"[yellow]  쿠팡 자동 다운로드 건너뜀: {repr(e)[:100]}[/yellow]")
     # 데모 호환: 기존 방이점 파일명 fallback
     if not t_bm.exists():
         alt = config.BASE_DIR / "토더_방이점_배민_5월.xlsx"
