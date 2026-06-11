@@ -79,9 +79,12 @@ class App:
         ttk.Label(opt, text="(thebut_m2@79daepo.com)", foreground="#888")\
             .grid(row=1, column=3, sticky="w")
 
+        self.dosend = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt, text="배민셀프 정산명세서 자동발송(메일)", variable=self.dosend)\
+            .grid(row=2, column=0, columnspan=3, sticky="w", pady=2)
         self.fetch = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt, text="자동수집(배민 메일 + 토더)", variable=self.fetch)\
-            .grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(opt, text="자동수집(배민 메일 수신 + 토더/쿠팡)", variable=self.fetch)\
+            .grid(row=3, column=0, columnspan=3, sticky="w", pady=2)
 
         self.run_btn = ttk.Button(root, text="손익 보고서 생성", command=self._run)
         self.run_btn.pack(**pad)
@@ -113,24 +116,47 @@ class App:
                     "downloads 폴더에 정산서가 이미 있다면 계속 진행할 수 있습니다.\n계속할까요?"):
                 return
 
+        do_send = self.dosend.get()
         self.run_btn.config(state="disabled")
         self.log.delete("1.0", "end")
         threading.Thread(target=self._worker,
-                         args=(sel, year, month, gagae_val, fetch, mail_pw), daemon=True).start()
+                         args=(sel, year, month, gagae_val, fetch, mail_pw, do_send),
+                         daemon=True).start()
 
-    def _worker(self, names, year, month, gagae_val, fetch, mail_pw):
+    def _worker(self, names, year, month, gagae_val, fetch, mail_pw, do_send):
+        import time, asyncio
+        import config
         old = sys.stdout
         sys.stdout = TextRedirector(self.log)
         done, fail = [], []
-        # 배민 정산서 Gmail 자동 수신 (선택 매장 대상, 1회)
-        if fetch and mail_pw:
-            try:
-                from step_baemin_mail import fetch_all as fetch_mail
-                sel_stores = [self.by_name[n] for n in names]
-                print("배민 정산서 메일 수신 중...")
-                fetch_mail(sel_stores, year, month, mail_pass=mail_pw)
-            except Exception as e:
-                print(f"[경고] 메일 수신 실패(계속 진행): {e}")
+        sel_stores = [self.by_name[n] for n in names]
+
+        # ① 배민셀프 정산명세서 자동발송 (메일)
+        if do_send:
+            from step_baemin_self_send import send_settlement_mail
+            for s in sel_stores:
+                print(f"[{s['name']}] 배민셀프 정산명세서 발송 중...")
+                try:
+                    asyncio.run(send_settlement_mail(s, year, month, config.MAIL_USER))
+                except Exception as e:
+                    print(f"  발송 실패: {repr(e)[:100]}")
+
+        # ② 배민 정산서 Gmail 수신 (폴링: 메일 도착까지 최대 ~8분)
+        if mail_pw:
+            from step_baemin_mail import fetch_all as fetch_mail
+            print("배민 정산서 메일 수신 대기 중... (최대 8분)")
+            need = {s["name"] for s in sel_stores if s.get("partner")}
+            got = set()
+            for attempt in range(16):
+                try:
+                    saved = fetch_mail(sel_stores, year, month, mail_pass=mail_pw)
+                    got |= set(saved.keys())
+                except Exception as e:
+                    print(f"  수신 시도 실패: {repr(e)[:80]}")
+                if need and need <= got:
+                    break
+                if attempt < 15:
+                    time.sleep(30)
         try:
             sik_bu = run_report._load_sikbu(month)
         except Exception as e:
